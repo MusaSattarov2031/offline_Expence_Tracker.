@@ -22,13 +22,24 @@ class DataManager:
         if not os.path.exists(EXCEL_FILE):
             # Create empty sheets if file doesn't exist
             with pd.ExcelWriter(EXCEL_FILE) as writer:
-                pd.DataFrame(columns=["id", "date", "note", "account", "category", "amount", "type"]).to_excel(writer, sheet_name="Transactions", index=False)
+                pd.DataFrame(columns=["id", "date", "note", "account", "category", "amount", "t_type"]).to_excel(writer, sheet_name="Transactions", index=False)
                 pd.DataFrame(columns=["name", "type", "currency", "initial_balance"]).to_excel(writer, sheet_name="Accounts", index=False)
+                pd.DataFrame(columns=["category_name", "type"]).to_excel(writer, sheet_name="Categories", index=False)
     
     def get_data(self, sheet_name):
         return pd.read_excel(EXCEL_FILE, sheet_name=sheet_name)
 
-    def add_transaction(self, date, note, account, category, amount, trans_type):
+    def add_category(self, name, cat_type):
+        df=self.get_data("Categories")
+        new_row={
+            "category_name": name,
+            "type": cat_type
+        }
+        df=pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        with pd.ExcelWriter(EXCEL_FILE, mode='a', if_sheet_exists='replace') as writer:
+            df.to_excel(writer, sheet_name="Categories", index=False)
+
+    def add_transaction(self, date, note, account, category, amount, t_type):
         df = self.get_data("Transactions")
         new_row = {
             "id": len(df) + 1,
@@ -37,7 +48,7 @@ class DataManager:
             "account": account,
             "category": category,
             "amount": float(amount),
-            "type": trans_type
+            "type": t_type
         }
         # Concat is the modern pandas way to append
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
@@ -51,7 +62,7 @@ class DataManager:
         if trans.empty:
             return 0, 0, 0
             
-        income = trans[trans['type'] == 'Income' and trans['category']!='Initial Balance']['amount'].sum()
+        income = trans[(trans['type'] == 'Income') & (trans['category']!='Initial Balance')]['amount'].sum()
         expense = trans[trans['type'] == 'Expense']['amount'].sum()
         total = income - expense
         return total, income, expense
@@ -109,15 +120,42 @@ class FinanceApp(ctk.CTk):
 
         self.btn_dash = ctk.CTkButton(self.sidebar, text="Dashboard", command=self.show_dashboard)
         self.btn_dash.grid(row=1, column=0, padx=20, pady=10)
-        
+
         self.btn_add = ctk.CTkButton(self.sidebar, text="Add Transaction", command=self.show_add_frame)
         self.btn_add.grid(row=2, column=0, padx=20, pady=10)
+
+        self.btn_add = ctk.CTkButton(self.sidebar, text="Add Category", command=self.show_add_category)
+        self.btn_add.grid(row=3, column=0, padx=20, pady=10)
+
+        self.btn_add = ctk.CTkButton(self.sidebar, text="Clear Data", command=self.clear_data)
+        self.btn_add.grid(row=4, column=0, padx=20, pady=10)
+        
+
+
 
         # 2. Main Area
         self.main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
         
         self.show_dashboard()
+
+
+    def clear_data(self):
+        if os.path.exists(EXCEL_FILE):
+            try:
+                os.remove(EXCEL_FILE)
+                print("Succesfull deletion")
+            except PermissionError:
+                print("File is Open")
+                return
+            self.db.check_files()
+            self.show_dashboard()
+        else:
+            print("File not found. Creation...")
+            self.db.check_files()
+            print("Completed")
+            self.show_dashboard()
+
 
     def clear_main(self):
         for widget in self.main_frame.winfo_children():
@@ -168,26 +206,59 @@ class FinanceApp(ctk.CTk):
         self.entry_note = ctk.CTkEntry(self.main_frame, placeholder_text="Note")
         self.entry_note.pack(pady=10)
 
-        self.combo_type = ctk.CTkComboBox(self.main_frame, values=["Expense", "Income"])
+        df=self.db.get_data("Categories")
+        cats=list(df["category_name"])
+        self.combo_type = ctk.CTkComboBox(self.main_frame, values=cats)
         self.combo_type.pack(pady=10)
 
         ctk.CTkButton(self.main_frame, text="Save", command=self.save_transaction).pack(pady=20)
 
+    def show_add_category(self):
+        self.clear_main()
+        ctk.CTkLabel(self.main_frame, text="Add Category", font=("Arial", 20, "bold")).pack(pady=20)
+
+        self.entry_name = ctk.CTkEntry(self.main_frame, placeholder_text="name")
+        self.entry_name.pack(pady=10)
+
+        self.cat_type = ctk.CTkComboBox(self.main_frame, values=["Expense", "Income"])
+        self.cat_type.pack(pady=10)
+
+        ctk.CTkButton(self.main_frame, text="Save", command=self.save_category).pack(pady=20)
+
     def save_transaction(self):
         amt = self.entry_amount.get()
         note = self.entry_note.get()
-        t_type = self.combo_type.get()
+        cat = self.combo_type.get()
+        df= self.db.get_data("Categories")
+
+        matching_rows = df.loc[df["category_name"] == cat, "type"]
+        if matching_rows.empty:
+            print("Error: Category not found")
+            return
+        typ=matching_rows.iloc[0]
         
         if amt:
             self.db.add_transaction(
                 date=datetime.now().strftime("%Y-%m-%d"),
                 note=note,
                 account="Cash", # You would make this a dropdown in full version
-                category="General", # You would make this a dropdown
+                category=cat,
                 amount=amt,
-                trans_type=t_type
+                t_type=typ
             )
             self.show_dashboard()
+    
+    def save_category(self):
+        name=self.entry_name.get()
+        cat_type=self.cat_type.get()
+        if name and cat_type:
+            self.db.add_category(
+                name,
+                cat_type
+            )
+        self.show_dashboard()
+
+
 
 if __name__ == "__main__":
     app = FinanceApp()
