@@ -140,7 +140,7 @@ class FinanceApp(ctk.CTk):
         # 2. Main Area
         self.main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
-        #Fix the transactions dashboard
+        
         
         self.show_dashboard()
 
@@ -178,16 +178,29 @@ class FinanceApp(ctk.CTk):
         self.create_stat_card(stats_frame, "Income", f"+{income:.2f}", "green")
         self.create_stat_card(stats_frame, "Expense", f"-{expense:.2f}", "red")
         
-        # Recent List (Mini Table) Fix this 
+        # Recent List (Mini Table)
         ctk.CTkLabel(self.main_frame, text="Recent Transactions", font=("Arial", 16, "bold")).pack(anchor="w", pady=(20, 10))
         
         df = self.db.get_data("Transactions").tail(10) # Get last 10
-        text_area = ctk.CTkTextbox(self.main_frame, width=600, height=300)
+        text_area = ctk.CTkTextbox(self.main_frame, width=600, height=300, font=("Consolas", 14))
         text_area.pack(fill="both", expand=True)
         
         # Simple display of dataframe as text
         if not df.empty:
-            text_area.insert("0.0", df[['date', 'account', 'category', 'amount']].to_string(index=False))
+            fmt="{:<12}{:<15}{:<15}{:>10}\n"
+            header=fmt.format("Date", "Account", "Category", "Amount")
+            sep="-"*55+"\n"
+            text_area.insert("end", header)
+            text_area.insert("end", sep)
+
+            for index, row in df.iterrows():
+                line=fmt.format(
+                    str(row['date']),
+                    str(row['account']),
+                    str(row['category']),
+                    f"{row['amount']:.2f}"
+                )
+                text_area.insert("end", line)
         else:
             text_area.insert("0.0", "No transactions yet.")
         text_area.configure(state="disabled")
