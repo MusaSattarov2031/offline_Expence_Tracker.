@@ -51,7 +51,11 @@ class DataManager:
             "type": t_type
         }
         # Concat is the modern pandas way to append
-        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        new_df=pd.DataFrame([new_row])
+        if df.empty:
+            df=new_df
+        else:
+            df = pd.concat([df, new_df], ignore_index=True)
         
         with pd.ExcelWriter(EXCEL_FILE, mode='a', if_sheet_exists='replace') as writer:
             df.to_excel(writer, sheet_name="Transactions", index=False)
@@ -136,6 +140,7 @@ class FinanceApp(ctk.CTk):
         # 2. Main Area
         self.main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.main_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
+        #Fix the transactions dashboard
         
         self.show_dashboard()
 
@@ -173,7 +178,7 @@ class FinanceApp(ctk.CTk):
         self.create_stat_card(stats_frame, "Income", f"+{income:.2f}", "green")
         self.create_stat_card(stats_frame, "Expense", f"-{expense:.2f}", "red")
         
-        # Recent List (Mini Table)
+        # Recent List (Mini Table) Fix this 
         ctk.CTkLabel(self.main_frame, text="Recent Transactions", font=("Arial", 16, "bold")).pack(anchor="w", pady=(20, 10))
         
         df = self.db.get_data("Transactions").tail(10) # Get last 10
