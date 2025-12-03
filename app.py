@@ -7,28 +7,53 @@ import requests
 from datetime import datetime
 
 # --- CONFIGURATION ---
-EXCEL_FILE = "finance_data.xlsx"
-RATES_FILE = "rates_cache.json"
-CURRENCY_API = "https://api.frankfurter.app/latest?from=USD"
+def check_func(func):
+    def wrapper(*args, **kwargs):
+        print(f"Running: {func.__name__}")
+        result=func(*args, **kwargs)
+        return result
+    return wrapper
+
+@check_func
+def load_paths(file):
+    EXCEL_FILE, RATES_FILE, CURRENCY_API="", "", ""
+    with open(file, 'r') as infile:
+        EXCEL_FILE, RATES_FILE, CURRENCY_API="", "", ""
+        for line in infile:
+            match line.split('=')[0]:
+                case "EXCEL_FILE":
+                    EXCEL_FILE=line.split('=')[1].strip()
+                case "RATES_FILE":
+                    RATES_FILE=line.split('=')[1].strip()
+                case "CURRENCY_API":
+                    CURRENCY_API=line.split('=')[1].strip()
+    return EXCEL_FILE, RATES_FILE, CURRENCY_API
+
+
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 class DataManager:
+    
     def __init__(self):
         self.check_files()
-
+    
+    @check_func
     def check_files(self):
         if not os.path.exists(EXCEL_FILE):
             # Create empty sheets if file doesn't exist
             with pd.ExcelWriter(EXCEL_FILE) as writer:
                 pd.DataFrame(columns=["id", "date", "note", "account", "category", "amount", "t_type"]).to_excel(writer, sheet_name="Transactions", index=False)
-                pd.DataFrame(columns=["name", "type", "currency", "initial_balance"]).to_excel(writer, sheet_name="Accounts", index=False)
+                pd.DataFrame(columns=["name", "type", "currency", "balance"]).to_excel(writer, sheet_name="Accounts", index=False)
                 pd.DataFrame(columns=["category_name", "type"]).to_excel(writer, sheet_name="Categories", index=False)
     
+    @check_func
     def get_data(self, sheet_name):
+        print()
         return pd.read_excel(EXCEL_FILE, sheet_name=sheet_name)
 
+    @check_func
     def add_category(self, name, cat_type):
         df=self.get_data("Categories")
         new_row={
@@ -38,16 +63,30 @@ class DataManager:
         df=pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
         with pd.ExcelWriter(EXCEL_FILE, mode='a', if_sheet_exists='replace') as writer:
             df.to_excel(writer, sheet_name="Categories", index=False)
-
+    
+    @check_func
     def add_transaction(self, date, note, account, category, amount, t_type):
+        dfa=self.get_data("Accounts")
         df = self.get_data("Transactions")
+        acc_index=dfa.index[dfa["name"]==account].to_list()[0]
+        amount=float(amount)
+        current_balance=float(dfa.at[acc_index, "balance"])
+
+        if t_type=="Expense":
+            if current_balance-amount<0:
+                print("Insuficient balance")
+                return
+            else:
+                current_balance-=amount
+        else:
+            current_balance+=amount
         new_row = {
             "id": len(df) + 1,
             "date": date,
             "note": note,
             "account": account,
             "category": category,
-            "amount": float(amount),
+            "amount": amount,
             "type": t_type
         }
         # Concat is the modern pandas way to append
@@ -56,23 +95,47 @@ class DataManager:
             df=new_df
         else:
             df = pd.concat([df, new_df], ignore_index=True)
-        
+        dfa.at[acc_index, "balance"]=current_balance
         with pd.ExcelWriter(EXCEL_FILE, mode='a', if_sheet_exists='replace') as writer:
             df.to_excel(writer, sheet_name="Transactions", index=False)
+            dfa.to_excel(writer, sheet_name="Accounts", index=False)
 
+    @check_func
     def get_summary(self):
         # Calculates totals using Pandas (replaces SQL Queries)
         trans = self.get_data("Transactions")
+
+        accs=self.get_data("Accounts")
         if trans.empty:
-            return 0, 0, 0
-            
-        income = trans[(trans['type'] == 'Income') & (trans['category']!='Initial Balance')]['amount'].sum()
-        expense = trans[trans['type'] == 'Expense']['amount'].sum()
-        total = income - expense
+            income=0
+            expense=0
+        else:
+            income = trans[(trans['type'] == 'Income')]['amount'].sum()
+            expense = trans[trans['type'] == 'Expense']['amount'].sum()
+        if accs.empty:
+            total=0
+        else:
+            total=accs['balance'].sum()#Only for one curency.Fix it later
+
         return total, income, expense
+
+    @check_func
+    def add_account(self, name, balance,acc_type, currency):
+        df=self.get_data("Accounts")
+        new_row={
+            "name": name,
+            "type": acc_type,
+            "currency": currency,
+            "balance": balance
+        }
+        df=pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        with pd.ExcelWriter(EXCEL_FILE, mode='a', if_sheet_exists='replace') as writer:
+            df.to_excel(writer, sheet_name="Accounts", index=False)
+
 
 class CurrencyManager:
     """Handles Internet logic. Updates only every 24 hours."""
+    @check_func
     def get_rates(self):
         now = time.time()
         
@@ -131,8 +194,11 @@ class FinanceApp(ctk.CTk):
         self.btn_add = ctk.CTkButton(self.sidebar, text="Add Category", command=self.show_add_category)
         self.btn_add.grid(row=3, column=0, padx=20, pady=10)
 
-        self.btn_add = ctk.CTkButton(self.sidebar, text="Clear Data", command=self.clear_data)
+        self.btn_add = ctk.CTkButton(self.sidebar, text="Add Account", command=self.show_add_account)
         self.btn_add.grid(row=4, column=0, padx=20, pady=10)
+
+        self.btn_add = ctk.CTkButton(self.sidebar, text="Clear Data", command=self.clear_data)
+        self.btn_add.grid(row=5, column=0, padx=20, pady=10)
         
 
 
@@ -144,7 +210,7 @@ class FinanceApp(ctk.CTk):
         
         self.show_dashboard()
 
-
+    @check_func
     def clear_data(self):
         if os.path.exists(EXCEL_FILE):
             try:
@@ -161,11 +227,48 @@ class FinanceApp(ctk.CTk):
             print("Completed")
             self.show_dashboard()
 
+    @check_func
+    def show_add_account(self):
+        self.clear_main()
+        ctk.CTkLabel(self.main_frame, text="Add Account", font=("Arial", 20, "bold")).pack(pady=20)
 
+        self.acc_name=ctk.CTkEntry(self.main_frame, placeholder_text="name")
+        self.acc_name.pack(pady=10)
+
+        self.balance=ctk.CTkEntry(self.main_frame, placeholder_text="Initial Balance")
+        self.balance.pack(pady=10)
+
+        self.type = ctk.CTkComboBox(self.main_frame, values=["Cash", "Bank Account"])
+        self.type.pack(pady=10)
+
+        self.currency_type = ctk.CTkComboBox(self.main_frame, values=list(self.cm.get_rates().keys()))
+        self.currency_type.pack(pady=10)
+
+        ctk.CTkButton(self.main_frame, text="Save", command=self.save_account).pack(pady=20)
+        
+    @check_func
+    def save_account(self):
+        name=self.acc_name.get()
+        balance=self.balance.get() or "0"
+        acc_type=self.type.get()
+        currency=self.currency_type.get()
+
+        if name and acc_type and currency:
+            self.db.add_account(
+                name=name,
+                balance=balance,
+                acc_type=acc_type,
+                currency=currency
+            )
+        self.show_dashboard()
+
+    @check_func
     def clear_main(self):
         for widget in self.main_frame.winfo_children():
             widget.destroy()
+        print(f"{os.path.abspath(EXCEL_FILE)}")
 
+    @check_func
     def show_dashboard(self):
         self.clear_main()
         total, income, expense = self.db.get_summary()
@@ -205,6 +308,7 @@ class FinanceApp(ctk.CTk):
             text_area.insert("0.0", "No transactions yet.")
         text_area.configure(state="disabled")
 
+    @check_func
     def create_stat_card(self, parent, title, value, color):
         card = ctk.CTkFrame(parent, width=200, height=100)
         card.pack(side="left", expand=True, fill="both", padx=5)
@@ -214,12 +318,18 @@ class FinanceApp(ctk.CTk):
         if color == "green": lbl.configure(text_color="#10B981")
         if color == "red": lbl.configure(text_color="#EF4444")
 
+    @check_func
     def show_add_frame(self):
         self.clear_main()
         ctk.CTkLabel(self.main_frame, text="Add Transaction", font=("Arial", 20, "bold")).pack(pady=20)
 
         self.entry_amount = ctk.CTkEntry(self.main_frame, placeholder_text="Amount")
         self.entry_amount.pack(pady=10)
+
+        df=self.db.get_data("Accounts")
+        accs=list(df["name"])
+        self.entry_account = ctk.CTkComboBox(self.main_frame, values=accs)
+        self.entry_account.pack(pady=10)
 
         self.entry_note = ctk.CTkEntry(self.main_frame, placeholder_text="Note")
         self.entry_note.pack(pady=10)
@@ -231,6 +341,7 @@ class FinanceApp(ctk.CTk):
 
         ctk.CTkButton(self.main_frame, text="Save", command=self.save_transaction).pack(pady=20)
 
+    @check_func
     def show_add_category(self):
         self.clear_main()
         ctk.CTkLabel(self.main_frame, text="Add Category", font=("Arial", 20, "bold")).pack(pady=20)
@@ -243,8 +354,10 @@ class FinanceApp(ctk.CTk):
 
         ctk.CTkButton(self.main_frame, text="Save", command=self.save_category).pack(pady=20)
 
+    @check_func
     def save_transaction(self):
         amt = self.entry_amount.get()
+        account=self.entry_account.get()
         note = self.entry_note.get()
         cat = self.combo_type.get()
         df= self.db.get_data("Categories")
@@ -254,18 +367,18 @@ class FinanceApp(ctk.CTk):
             print("Error: Category not found")
             return
         typ=matching_rows.iloc[0]
-        
         if amt:
             self.db.add_transaction(
                 date=datetime.now().strftime("%Y-%m-%d"),
                 note=note,
-                account="Cash", # You would make this a dropdown in full version
+                account=account,
                 category=cat,
                 amount=amt,
                 t_type=typ
             )
             self.show_dashboard()
     
+    @check_func
     def save_category(self):
         name=self.entry_name.get()
         cat_type=self.cat_type.get()
@@ -279,5 +392,11 @@ class FinanceApp(ctk.CTk):
 
 
 if __name__ == "__main__":
+    EXCEL_FILE, RATES_FILE, CURRENCY_API="", "", ""
+    try:
+        EXCEL_FILE, RATES_FILE, CURRENCY_API=load_paths("filepaths.txt")
+    except Exception as e:
+        print(f"File paths handling error:\n{e}")
+    print (EXCEL_FILE, RATES_FILE, CURRENCY_API, sep="\n")
     app = FinanceApp()
     app.mainloop()
